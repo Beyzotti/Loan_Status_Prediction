@@ -3,19 +3,23 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
+import math
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, AdaBoostClassifier
 from sklearn.model_selection import GridSearchCV, cross_validate, RandomizedSearchCV, train_test_split, cross_val_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix, classification_report, RocCurveDisplay
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder, StandardScaler, RobustScaler, OneHotEncoder
 from sklearn.svm import SVC
-from catboost import CatBoostClassifier
+from catboost import CatBoostClassifier, CatBoostRegressor, Pool
 import joblib
-Hello
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore")
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.simplefilter("ignore", category=ConvergenceWarning)
@@ -143,17 +147,19 @@ check_df(df)
 
 df.describe().T
 
-# Kategorik eksikler için veri doldurma işlemi
-df["Gender"].fillna(df["Credit_History"].mode()[0], inplace=True)
-df["Dependents"].fillna(df["Credit_History"].mode()[0], inplace=True)
-df["Self_Employed"].fillna(df["Credit_History"].mode()[0], inplace=True)
-
-# Numerik eksik değerler için veri doldurma işlemi
-df["Loan_Amount_Term"].fillna(df["Loan_Amount_Term"].median(), inplace=True)
-df["Credit_History"].fillna(df["Credit_History"].mode()[0], inplace=True)
-
 # Eksik veri kontrolü
 df.isnull().sum()
+
+# Fill missing values with predicted values.
+df['Loan_Amount_Term'] = df['Loan_Amount_Term'].fillna(360)
+df['Credit_History'] = df['Credit_History'].fillna(1)
+df['Gender'] = df['Gender'].fillna('Male')
+df['Dependents'] = df['Dependents'].fillna('0')
+df['Self_Employed'] = df['Self_Employed'].fillna('No')
+
+# Convert data types to a more convenient type for processing.
+df['Credit_History'] = df['Credit_History'].astype(str)
+df['ApplicantIncome'] = df['ApplicantIncome'].astype(float)
 
 # Değişken türlerinin ayrıştırılması
 cat_cols, num_cols, cat_but_car = grab_col_names(df, cat_th=5, car_th=20)
@@ -167,6 +173,50 @@ df[num_cols].describe().T
 
 # Sayısal değişkenkerin birbirleri ile korelasyonu
 correlation_matrix(df, num_cols)
+
+# Görselleştirme
+## Numerik Değişkenlerin Görselleştirilmesi
+def plot_distributions(df, columns, target_variable=None):
+
+    # Determine the number of subplots required
+    num_columns = len(columns)
+    num_subplots = math.ceil(num_columns / 2)
+
+    # Create subplots
+    fig, axes = plt.subplots(num_subplots, 2, figsize=(12, 4 * num_subplots))
+    axes = axes.flatten()
+
+    # Plot distribution plots for each numeric column
+    for i in range(num_columns):
+        sns.histplot(data=df, x=columns[i], hue=target_variable, stat='percent', common_norm=False, kde=True, ax=axes[i])
+        axes[i].set_title(f'Distribution of {columns[i]}')
+
+    # Adjust layout
+    plt.tight_layout()
+    plt.show()
+plot_distributions(df, num_cols, target_variable='Loan_Status')
+
+
+## Kategorik Değişkenlerin Görselleştirilmesi
+def plot_categorical_distributions(df, categorical_columns, target_variable=None):
+
+    # Determine the number of subplots required
+    num_categorical_columns = len(categorical_columns)
+    num_subplots = math.ceil(num_categorical_columns / 2)
+
+    # Create subplots
+    fig, axes = plt.subplots(num_subplots, 2, figsize=(12, 4 * num_subplots))
+    axes = axes.flatten()
+
+    # Plot bar plots for categorical columns
+    for i in range(num_categorical_columns):
+        sns.countplot(data=df, x=categorical_columns[i], hue=target_variable, ax=axes[i])
+        axes[i].set_title(f'Distribution of {categorical_columns[i]}')
+
+    # Adjust layout
+    plt.tight_layout()
+    plt.show()
+plot_categorical_distributions(df, cat_cols, target_variable='Loan_Status')
 
 
 # Data'nın incelenmesi
@@ -197,12 +247,8 @@ df.head()
 
 df = one_hot_encoder(df, cat_cols, drop_first=True)
 
-X_scaled = StandardScaler().fit_transform(df[num_cols])
-df[num_cols] = pd.DataFrame(X_scaled, columns=df[num_cols].columns)
-
 y = df["Loan_Status_Y"]
 X = df.drop(["Loan_Status_Y"], axis=1)
-
 
 def base_models(X, y, scoring="roc_auc"):
     print("Base Models....")
@@ -229,7 +275,6 @@ cart_params = {'max_depth': range(1, 20),
                "min_samples_split": range(2, 30)}
 
 rf_params = {"max_depth": [8, 15, None],
-             "max_features": [5, 7, "auto"],
              "min_samples_split": [15, 20],
              "n_estimators": [200, 300]}
 
@@ -240,7 +285,8 @@ xgboost_params = {"learning_rate": [0.1, 0.01],
 
 lightgbm_params = {"learning_rate": [0.01, 0.1],
                    "n_estimators": [300, 500],
-                   "colsample_bytree": [0.7, 1]}
+                   "colsample_bytree": [0.7, 1],
+                   "verbose": [-1]}
 
 classifiers = [('KNN', KNeighborsClassifier(), knn_params),
                ("CART", DecisionTreeClassifier(), cart_params),
