@@ -28,9 +28,9 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 
-df = pd.read_csv("Dataset/loan_data.csv")
+df= pd.read_csv("C:/Users/90535/OneDrive/Masaüstü/data_analysis_with_python/loan_data.csv")
 df = df.drop(["Loan_ID"], axis=1)
-
+df.head()
 
 def check_df(dataframe):
     print("##################### Shape #####################")
@@ -247,26 +247,45 @@ df.head()
 
 df = one_hot_encoder(df, cat_cols, drop_first=True)
 
+#Standartlaştırma
+X_scaled = StandardScaler().fit_transform(df[num_cols])
+df[num_cols] = pd.DataFrame(X_scaled, columns=df[num_cols].columns)
+
+
+
 y = df["Loan_Status_Y"]
 X = df.drop(["Loan_Status_Y"], axis=1)
+
+X_Train, X_Test, y_train, y_test=train_test_split(X,y, test_size=30,random_state=15)
+
+
 
 def base_models(X, y, scoring="roc_auc"):
     print("Base Models....")
     classifiers = [('LR', LogisticRegression()),
                    ('KNN', KNeighborsClassifier()),
                    ("SVC", SVC()),
-                   ("CART", DecisionTreeClassifier()),
+                   ("CART", DecisionTreeClassifier(error_score='raise')),
                    ("RF", RandomForestClassifier()),
                    ('Adaboost', AdaBoostClassifier()),
                    ('GBM', GradientBoostingClassifier()),
                    ('XGBoost', XGBClassifier(use_label_encoder=False, eval_metric='logloss')),
-                   ('LightGBM', LGBMClassifier()),
-                   # ('CatBoost', CatBoostClassifier(verbose=False))
+                   ('LightGBM', LGBMClassifier(verbose=-1)),
+                   ('CatBoost', CatBoostClassifier(verbose=False))
                    ]
 
     for name, classifier in classifiers:
-        cv_results = cross_validate(classifier, X, y, cv=3, scoring=scoring)
+        cv_results = cross_validate(classifier, X, y, cv=5, scoring=scoring)
         print(f"{scoring}: {round(cv_results['test_score'].mean(), 4)} ({name}) ")
+
+
+
+
+
+
+lr_params = {"max_iter" : range(0,200,25),
+             "solver" : ['newton-cg', 'lbfgs', 'liblinear', 'sag', 'saga'],
+             "n_jobs": [-1,1,None]}
 
 
 knn_params = {"n_neighbors": range(2, 50)}
@@ -274,9 +293,9 @@ knn_params = {"n_neighbors": range(2, 50)}
 cart_params = {'max_depth': range(1, 20),
                "min_samples_split": range(2, 30)}
 
-rf_params = {"max_depth": [8, 15, None],
-             "min_samples_split": [15, 20],
-             "n_estimators": [200, 300]}
+rf_params = {"max_depth": [3,5, 8, 15, None],
+             "min_samples_split": [15, 20,45,50],
+             "n_estimators": [100, 200, 300]}
 
 xgboost_params = {"learning_rate": [0.1, 0.01],
                   "max_depth": [5, 8],
@@ -288,14 +307,22 @@ lightgbm_params = {"learning_rate": [0.01, 0.1],
                    "colsample_bytree": [0.7, 1],
                    "verbose": [-1]}
 
-classifiers = [('KNN', KNeighborsClassifier(), knn_params),
+catboost_params = {"iterations": [700,800,900],
+                   "learning_rate": [0.01, 0.1,0.03],
+                   "depth": [3,6]}
+
+
+
+classifiers = [('LR',LogisticRegression(), lr_params),
+               ('KNN', KNeighborsClassifier(), knn_params),
                ("CART", DecisionTreeClassifier(), cart_params),
                ("RF", RandomForestClassifier(), rf_params),
-               ('XGBoost', XGBClassifier(use_label_encoder=False, eval_metric='logloss'), xgboost_params),
-               ('LightGBM', LGBMClassifier(), lightgbm_params)]
+               ('XGBoost', XGBClassifier(use_label_encoder=False), xgboost_params),
+               ('LightGBM', LGBMClassifier(verbose=-1), lightgbm_params),
+               ('CatBoost',CatBoostClassifier(verbose=False),catboost_params)]
 
 
-def hyperparameter_optimization(X, y, cv=3, scoring="roc_auc"):
+def hyperparameter_optimization(X, y, cv=5, scoring="roc_auc"):
     print("Hyperparameter Optimization....")
     best_models = {}
     for name, classifier, params in classifiers:
@@ -315,8 +342,8 @@ def hyperparameter_optimization(X, y, cv=3, scoring="roc_auc"):
 
 def voting_classifier(best_models, X, y):
     print("Voting Classifier...")
-    voting_clf = VotingClassifier(estimators=[('KNN', best_models["KNN"]), ('RF', best_models["RF"]),
-                                              ('LightGBM', best_models["LightGBM"])],
+    voting_clf = VotingClassifier(estimators=[('XGBoost', best_models["XGBoost"]), ('RF', best_models["RF"]),
+                                              ('LightGBM', best_models["LightGBM"]), ('CatBoost', best_models["CatBoost"])],
                                   voting='soft').fit(X, y)
     cv_results = cross_validate(voting_clf, X, y, cv=3, scoring=["accuracy", "f1", "roc_auc"])
     print(f"Accuracy: {cv_results['test_accuracy'].mean()}")
@@ -325,8 +352,241 @@ def voting_classifier(best_models, X, y):
     return voting_clf
 
 
-hyperparameter_optimization(X, y, cv=3, scoring="roc_auc")
+hyperparameter_optimization(X, y, cv=5, scoring="roc_auc")
 
 base_models(X, y)
-best_models = hyperparameter_optimization(X, y)
-voting_clf = voting_classifier(best_models, X, y)
+best_models = hyperparameter_optimization(X_Train, y_train)
+voting_clf = voting_classifier(best_models, X_Train, y_train)
+
+
+##Train Hatası
+
+y_pred=voting_clf.predict(X_Train)
+y_prob=voting_clf.predict_proba(X_Train)[:,1]
+print(classification_report(y_train,y_pred))
+roc_auc_score(y_train,y_prob)
+
+##Test Hatası
+
+y_pred=voting_clf.predict(X_Test)
+y_prob=voting_clf.predict_proba(X_Test)[:,1]
+print(classification_report(y_test ,y_pred))
+roc_auc_score(y_test,y_prob)
+
+################################################
+# LightGBM
+################################################
+
+lgbm_model = LGBMClassifier(random_state=15)
+
+lgbm_params = {"learning_rate": [0.01, 0.1, 0.001],
+               "n_estimators": [100, 300, 500, 1000],
+               "colsample_bytree": [0.5, 0.7, 1]}
+
+lgbm_best_grid = GridSearchCV(lgbm_model, lgbm_params, cv=5, n_jobs=-1, verbose=True).fit(X_Train, y_train)
+
+lgbm_final = lgbm_model.set_params(**lgbm_best_grid.best_params_, random_state=17).fit(X_Train, y_train)
+
+cv_results = cross_validate(lgbm_final, X_Train, y_train, cv=10, scoring=["accuracy", "f1", "roc_auc"])
+cv_results['test_accuracy'].mean()
+cv_results['test_f1'].mean()
+cv_results['test_roc_auc'].mean()
+
+"""
+cv_results['test_accuracy'].mean()
+Out[61]: 0.8347619047619048
+cv_results['test_f1'].mean()
+Out[62]: 0.8934882971675424
+cv_results['test_roc_auc'].mean()
+Out[63]: 0.8089636363636362
+"""
+
+
+""""
+Test Sonuç:
+"""
+
+y_pred=lgbm_final.predict(X_Test)
+y_prob=lgbm_final.predict_proba(X_Test)[:,1]
+print(classification_report(y_test ,y_pred))
+roc_auc_score(y_test,y_prob)
+## ROC_AUC 0.936
+
+
+################################################
+# XGBoost
+################################################
+
+xgboost_model = XGBClassifier(random_state=15)
+
+xgboost_params = {"learning_rate": [0.1, 0.01, 0.001],
+                  "max_depth": [5, 8, 12, 15, 20],
+                  "n_estimators": [100, 500, 1000],
+                  "colsample_bytree": [0.5, 0.7, 1]}
+
+xgboost_best_grid = GridSearchCV(xgboost_model, xgboost_params, cv=5, n_jobs=-1, verbose=True).fit(X_Train, y_train)
+
+xgboost_final = xgboost_model.set_params(**xgboost_best_grid.best_params_, random_state=17).fit(X_Train, y_train)
+
+cv_results = cross_validate(xgboost_final, X_Train, y_train, cv=10, scoring=["accuracy", "f1", "roc_auc"])
+cv_results['test_accuracy'].mean()
+cv_results['test_f1'].mean()
+cv_results['test_roc_auc'].mean()
+
+""" 
+Train Sonuç:
+cv_results['test_accuracy'].mean()
+Out[79]: 0.8147619047619047
+cv_results['test_f1'].mean()
+Out[80]: 0.8765314576080392
+cv_results['test_roc_auc'].mean()
+Out[81]: 0.8094121212121212
+"""
+""""
+Test Sonuç:
+"""
+
+y_pred=xgboost_final.predict(X_Test)
+y_prob=xgboost_final.predict_proba(X_Test)[:,1]
+print(classification_report(y_test ,y_pred))
+roc_auc_score(y_test,y_prob)
+## ROC_AUC 0.928
+
+################################################
+# CatBoost
+################################################
+
+catboost_model = CatBoostClassifier(random_state=15, verbose=False)
+
+catboost_params = {"iterations": [700,800,900],
+                   "learning_rate": [0.01, 0.1,0.03],
+                   "depth": [3,6]}
+
+catboost_best_grid = GridSearchCV(catboost_model, catboost_params, cv=5, n_jobs=-1, verbose=True).fit(X_Train, y_train)
+
+catboost_final = catboost_model.set_params(**catboost_best_grid.best_params_, random_state=17).fit(X_Train, y_train)
+
+cv_results = cross_validate(catboost_final, X_Train, y_train, cv=10, scoring=["accuracy", "f1", "roc_auc"])
+
+cv_results['test_accuracy'].mean()
+cv_results['test_f1'].mean()
+cv_results['test_roc_auc'].mean()
+
+"""
+Train Sonuç:
+cv_results['test_accuracy'].mean()
+Out[99]: 0.8262698412698413
+cv_results['test_f1'].mean()
+Out[100]: 0.8825518757971587
+cv_results['test_roc_auc'].mean()
+Out[101]: 0.8303575757575757
+"""
+
+"""
+Test Sonuç:
+"""
+y_pred=catboost_final.predict(X_Test)
+y_prob=catboost_final.predict_proba(X_Test)[:,1]
+print(classification_report(y_test ,y_pred))
+roc_auc_score(y_test,y_prob)
+##ROC_AUC  0.9680000000000001
+
+################################################
+# Random Forests
+################################################
+
+rf_model = RandomForestClassifier(random_state=15)
+
+rf_params = {"max_depth": [5, 8, None],
+             "max_features": [3, 5, 7, "auto"],
+             "min_samples_split": [2, 5, 8, 15, 20],
+             "n_estimators": [100, 200, 500]}
+
+rf_best_grid = GridSearchCV(rf_model, rf_params, cv=5, n_jobs=-1, verbose=True).fit(X_Train, y_train)
+
+rf_best_grid.best_params_
+
+rf_best_grid.best_score_
+
+rf_final = rf_model.set_params(**rf_best_grid.best_params_, random_state=17).fit(X_Train, y_train)
+
+
+cv_results = cross_validate(rf_final, X_Train, y_train, cv=10, scoring=["accuracy", "f1", "roc_auc"])
+cv_results['test_accuracy'].mean()
+cv_results['test_f1'].mean()
+cv_results['test_roc_auc'].mean()
+
+"""
+Train Sonuç:
+cv_results['test_accuracy'].mean()
+Out[111]: 0.8348412698412698
+cv_results['test_f1'].mean()
+Out[112]: 0.8930986867779319
+cv_results['test_roc_auc'].mean()
+Out[113]: 0.8139363636363637
+"""
+
+"""
+Test Sonuç:
+"""
+y_pred=rf_final.predict(X_Test)
+y_prob=rf_final.predict_proba(X_Test)[:,1]
+print(classification_report(y_test ,y_pred))
+roc_auc_score(y_test,y_prob)
+##ROC_AUC  0.928
+
+
+################################################
+# Feature Importance
+################################################
+
+def plot_importance(model, features, num=len(X_Test), save=False):
+    feature_imp = pd.DataFrame({'Value': model.feature_importances_, 'Feature': features.columns})
+    plt.figure(figsize=(10, 10))
+    sns.set(font_scale=1)
+    sns.barplot(x="Value", y="Feature", data=feature_imp.sort_values(by="Value",
+                                                                     ascending=False)[0:num])
+    plt.title('Features')
+    plt.tight_layout()
+    plt.show()
+    if save:
+        plt.savefig('importances.png')
+
+plot_importance(rf_final, X_Test)
+plot_importance(xgboost_final, X_Test)
+plot_importance(lgbm_final, X_Test)
+plot_importance(catboost_final,X_Test)
+
+################################################
+# Voting Classifier
+################################################
+
+
+voting_clf = VotingClassifier(estimators=[("rf",rf_final),("xgb",xgboost_final),
+                                          ("lg",lgbm_final), ("cb",catboost_final)],
+                              voting='soft').fit(X_Train, y_train)
+
+cv_results = cross_validate(voting_clf, X_Train, y_train, cv=5, scoring=["accuracy", "f1", "roc_auc"])
+print(f"Accuracy: {cv_results['test_accuracy'].mean()}")
+print(f"F1Score: {cv_results['test_f1'].mean()}")
+print(f"ROC_AUC: {cv_results['test_roc_auc'].mean()}")
+
+"""
+Train Sonuç:
+print(f"Accuracy: {cv_results['test_accuracy'].mean()}")
+Accuracy: 0.8346881287726358
+print(f"F1Score: {cv_results['test_f1'].mean()}")
+F1Score: 0.8913734102519149
+print(f"ROC_AUC: {cv_results['test_roc_auc'].mean()}")
+ROC_AUC: 0.8353974732750242
+"""
+
+"""
+Test Sonuç:
+"""
+
+y_pred=voting_clf.predict(X_Test)
+y_prob=voting_clf.predict_proba(X_Test)[:,1]
+print(classification_report(y_test ,y_pred))
+roc_auc_score(y_test,y_prob)
+##ROC_AUC   0.9440000000000001
